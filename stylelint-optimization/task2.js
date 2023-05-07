@@ -40,9 +40,9 @@ async function InsertIgnoreLintRulesInfiles(baseDir) {
 
           sortIgnoreWarnLines.forEach((ignoreRules, lineIndex) => {
             if (ignoreRules[0] === 1) {
-              fileContent = insert(fileContent, '\n/* stylelint-disable ' + ignoreRules[1] + ' */', lineIndex);
+              fileContent = insert(fileContent, '\n/* stylelint-disable ' + ignoreRules.slice(1).join(',') + ' */', lineIndex);
             } else if (ignoreRules[0] === 2) {
-              fileContent = insert(fileContent, '\n/* stylelint-enable ' + ignoreRules[1] + ' */', lineIndex);
+              fileContent = insert(fileContent, '\n/* stylelint-enable ' + ignoreRules.slice(1).join(',') + ' */', lineIndex);
             } else {
               fileContent = insert(fileContent, '/* stylelint-disable-next-line ' + ignoreRules.join(', ') + ' */' + (lineIndex === 0? '\n': ''), lineIndex);
             }       
@@ -65,7 +65,8 @@ async function InsertIgnoreLintRulesInfiles(baseDir) {
 function getIgnoreWarningsLinesPos(warnings, fileContent) {
   const ignoreWarnLines = new Map();
   const descRule = 'no-descending-specificity';
-  const classRule = 'selector-class-pattern';
+  const classRules = ['selector-class-pattern', 'selector-pseudo-class-no-unknown', 'selector-not-notation'];
+  const propertyRules = ['custom-property-pattern', 'alpha-value-notation', 'color-function-notation'];
 
   warnings.forEach((warn)=>{
     let lineIndex = warn.line === 1 ? 0 : findSymPosInStr(fileContent, '\n', warn.line - 1);
@@ -74,28 +75,29 @@ function getIgnoreWarningsLinesPos(warnings, fileContent) {
     let ruleIsAdd = false;
     if (warn.rule === descRule) {
       const {pos1, pos2} = getPosForDescendingRule(fileContent, lineIndex);
-      ignoreWarnLines.set(pos1, [1, descRule]);
-      ignoreWarnLines.set(pos2, [2, descRule]);
+      ignoreWarnLines.set(pos1, addToArrInMap(ignoreWarnLines, pos1, warn.rule, 1));
+      ignoreWarnLines.set(pos2, addToArrInMap(ignoreWarnLines, pos2, warn.rule, 2));
       ruleIsAdd = true;
     }
-    if (warn.rule === classRule) {
+    if (classRules.includes(warn.rule)) {
       const {useBlock, pos1: p1, pos2: p2} = getPosForSelectorClassRule(fileContent, lineIndex);
       if (useBlock) {
-        ignoreWarnLines.set(p1, [1, classRule]);
-        ignoreWarnLines.set(p2, [2, classRule]);
+        ignoreWarnLines.set(p1, addToArrInMap(ignoreWarnLines, p1, warn.rule, 1));
+        ignoreWarnLines.set(p2, addToArrInMap(ignoreWarnLines, p2, warn.rule, 2));
+        ruleIsAdd = true;
+      }
+    }
+    if (propertyRules.includes(warn.rule)) {
+      const {useBlock: useBlock2, pos1: p11, pos2: p22} = getPosForCustomPropertyRule(fileContent, lineIndex);
+      if (useBlock2) {
+        ignoreWarnLines.set(p11, addToArrInMap(ignoreWarnLines, p11, warn.rule, 1));
+        ignoreWarnLines.set(p22, addToArrInMap(ignoreWarnLines, p22, warn.rule, 2));
         ruleIsAdd = true;
       }
     }
 
-    let oldRules = ignoreWarnLines.get(lineIndex);
-    if (oldRules) {
-      if (!oldRules.includes(warn.rule)) {
-        oldRules.push(warn.rule);
-      }
-    }
-
     if (!ruleIsAdd && lineIndex !== -1) {
-      ignoreWarnLines.set(lineIndex, oldRules || [warn.rule])
+      ignoreWarnLines.set(lineIndex, addToArrInMap(ignoreWarnLines, lineIndex, warn.rule));
     }
   })
 
@@ -150,12 +152,65 @@ function getPosForSelectorClassRule(str, curPos) {
     }
   }
 
-  if (commaCount > 1) {
+  if (commaCount > 0) {
     pos.useBlock = true;
   }
 
   return pos;
 }
+
+// отключение правил вида custom-property-pattern нарушают синтаксис css, если свойство расположено на нескольких строках,
+// поэтому для свойств на нескольких строках будем отключать блоки кода
+function getPosForCustomPropertyRule(str, curPos) {
+  const pos = {useBlock: false, pos1: curPos, pos2: curPos + 1};
+  let endLineCount = 0;
+
+  let j = pos.pos2;
+  for (; j < str.length; j++) {
+    if (str[j] === ';') {
+      pos.pos2 = (j + 1);
+      break;
+    }
+  }
+  for (let i = j; i >= 0; i--) {
+    if (str[i] === ':') {
+      for (let k = i - 1; k >= 0; k--) {
+        if (str[k] === '\n') {
+          pos.pos1 = k;
+          break;
+        }
+      }
+      break;
+    }
+    if (str[i] === '\n') {
+      endLineCount++;
+    }
+  }
+
+  if (endLineCount > 0) {
+    pos.useBlock = true;
+  }
+
+  return pos;
+}
+
+function addToArrInMap(map, key, value, blockPos = 0) {
+  const arr = map.get(key);
+
+  if (arr) {
+    if (!arr.includes(value)) {
+      arr.push(value);
+    }
+    return arr;
+  } else {
+    if (blockPos) {
+      return [blockPos, value];
+    } else {
+      return [value];
+    }
+  }
+}
+
 
 // вставка строки в строку, в позицию pos
 function insert(str, substr, pos) {
