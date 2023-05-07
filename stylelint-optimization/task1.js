@@ -6,6 +6,9 @@ const stylelint = require('stylelint');
 const path = require('path');
 const glob = require('glob');
 
+// запуск для корневой папки
+ReduceStylelintignore('.');
+
 async function ReduceStylelintignore(baseDir) {
   const allFiles = glob.sync('**/*.css');
 
@@ -55,9 +58,6 @@ async function ReduceStylelintignore(baseDir) {
     console.error('error of read stylelintignore: ', e)
   }
 }
-
-// запуск для корневой папки
-ReduceStylelintignore('.');
 
 // функция, удаляющая покрываемые правила
 function RemoveRulesCoveredByOthers(rulesFilesPaths) {
